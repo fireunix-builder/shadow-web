@@ -68,24 +68,35 @@ jobs:
           VERSION_NUMBER: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          version="${VERSION_NUMBER#v}"
-          archive="shadow-web-${version}-web"
-          package_dir="dist/${archive}"
+          private_log="${RUNNER_TEMP}/private-build.log"
+          set +e
+          (
+            set -euo pipefail
+            version="${VERSION_NUMBER#v}"
+            archive="shadow-web-${version}-web"
+            package_dir="dist/${archive}"
 
-          npm --prefix source ci --no-audit --no-fund
-          npm --prefix source run build
-          test -f source/dist/index.html
-          if find source/dist -type f -name '*.map' -print -quit | grep -q .; then
-            echo "source maps are not allowed in public artifacts" >&2
-            exit 1
+            npm --prefix source ci --no-audit --no-fund
+            npm --prefix source run build
+            test -f source/dist/index.html
+            if find source/dist -type f -name '*.map' -print -quit | grep -q .; then
+              exit 1
+            fi
+
+            mkdir -p "${package_dir}"
+            cp -R source/dist "${package_dir}/dist"
+            install -m 0644 builder/README.md "${package_dir}/README.md"
+            tar -C dist -czf "dist/${archive}.tar.gz" "${archive}"
+            sha256sum "dist/${archive}.tar.gz" > dist/SHA256SUMS
+            rm -rf source "${package_dir}"
+          ) >"${private_log}" 2>&1
+          status=$?
+          set -e
+          rm -f "${private_log}"
+          if (( status != 0 )); then
+            echo "::error::Private source build failed; detailed output was intentionally withheld."
+            exit "${status}"
           fi
-
-          mkdir -p "${package_dir}"
-          cp -R source/dist "${package_dir}/dist"
-          install -m 0644 builder/README.md "${package_dir}/README.md"
-          tar -C dist -czf "dist/${archive}.tar.gz" "${archive}"
-          sha256sum "dist/${archive}.tar.gz" > dist/SHA256SUMS
-          rm -rf source "${package_dir}"
 
       - name: Store release artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
