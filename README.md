@@ -9,3 +9,6 @@ source maps are rejected, and only the production `dist` output is published.
 Private source files and project build directories are never cached or
 uploaded.
 
+GitHub Releases are written back to the private web repository through a
+separate single-repository write token. This public repository never hosts
+Releases.
