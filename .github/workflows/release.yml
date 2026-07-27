@@ -1,0 +1,119 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Private source branch, tag, or commit"
+        required: true
+        default: "main"
+        type: string
+      version:
+        description: "Release version, for example v0.1.0"
+        required: true
+        type: string
+      publish:
+        description: "Publish a GitHub Release"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build production frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out public builder
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: builder
+
+      - name: Check out private source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: fireunix-app/shadow-web
+          ref: ${{ inputs.source_ref }}
+          token: ${{ secrets.SOURCE_REPO_PAT }}
+          persist-credentials: false
+          path: source
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: false
+
+      - name: Validate release version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "invalid release version: ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+
+      - name: Build and package
+        shell: bash
+        env:
+          VERSION_NUMBER: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version="${VERSION_NUMBER#v}"
+          archive="shadow-web-${version}-web"
+          package_dir="dist/${archive}"
+
+          npm --prefix source ci --no-audit --no-fund
+          npm --prefix source run build
+          test -f source/dist/index.html
+          if find source/dist -type f -name '*.map' -print -quit | grep -q .; then
+            echo "source maps are not allowed in public artifacts" >&2
+            exit 1
+          fi
+
+          mkdir -p "${package_dir}"
+          cp -R source/dist "${package_dir}/dist"
+          install -m 0644 builder/README.md "${package_dir}/README.md"
+          tar -C dist -czf "dist/${archive}.tar.gz" "${archive}"
+          sha256sum "dist/${archive}.tar.gz" > dist/SHA256SUMS
+          rm -rf source "${package_dir}"
+
+      - name: Store release artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: shadow-web-release
+          path: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish GitHub Release
+        if: inputs.publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.version }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          assets=(dist/*.tar.gz dist/SHA256SUMS)
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" "${assets[@]}" --clobber
+            exit 0
+          fi
+
+          gh release create "${RELEASE_TAG}" \
+            "${assets[@]}" \
+            --target "${GITHUB_SHA}" \
+            --title "Shadow Web ${RELEASE_TAG}" \
+            --notes "Production frontend built from the configured private source ref."
