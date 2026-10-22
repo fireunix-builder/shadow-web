@@ -9,6 +9,11 @@ source maps are rejected, and only the production `dist` output is published.
 Private source files and project build directories are never cached or
 uploaded.
 
+Published archives are uploaded to Cloudflare R2 under `Web/<tag>/` (`shadow-web-<version>-web.tar.gz` and
+`SHA256SUMS`, plus a `release.json` copy of the manifest) and `Web/latest.json` is updated, using the `R2_ACCESS_KEY_ID`,
+`R2_SECRET_ACCESS_KEY`, `R2_ACCOUNT_ID`, `R2_BUCKET` and `R2_PUBLIC_URL` Actions
+secrets.
+
 GitHub Releases are written back to the private web repository with a short-lived installation token of the
 `fireunix-publisher` GitHub App (`RELEASE_APP_CLIENT_ID` /
 `RELEASE_APP_PRIVATE_KEY` secrets), scoped to that one repository. This public repository never hosts
